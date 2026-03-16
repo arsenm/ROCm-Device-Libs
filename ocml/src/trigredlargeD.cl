@@ -8,6 +8,36 @@
 #include "mathD.h"
 #include "trigredD.h"
 
+struct f64x2 {
+    double hi;
+    double lo;
+};
+
+static CONSTATTR INLINEATTR struct f64x2
+prod2(double a, double b)
+{
+    double p = a * b;
+    struct f64x2 r = { p, BUILTIN_FMA_F64(a, b, -p) };
+    return r;
+}
+
+static CONSTATTR INLINEATTR struct f64x2
+sum2(double a, double b)
+{
+    double s = a + b;
+    double d = s - a;
+    struct f64x2 r = { s, (a - (s - d)) + (b - d) };
+    return r;
+}
+
+static CONSTATTR INLINEATTR struct f64x2
+fsum2(double a, double b)
+{
+    double s = a + b;
+    struct f64x2 r = { s, b - (s - a) };
+    return r;
+}
+
 CONSTATTR struct redret
 MATH_PRIVATE(trigredlarge)(double x)
 {
@@ -18,59 +48,26 @@ MATH_PRIVATE(trigredlarge)(double x)
 
     x = x >= 0x1.0p+945 ? BUILTIN_FLDEXP_F64(x, -128) : x;
 
-    // PROD2(p0, x, p0h, p0l)
-    double p0h = p0 * x;
-    double p0l = BUILTIN_FMA_F64(p0, x, -p0h);
+    struct f64x2 rp0 = prod2(p0, x);
+    struct f64x2 rp1 = prod2(p1, x);
+    struct f64x2 rp2 = prod2(p2, x);
 
-    // PROD2(p1, x, p1h, p1l)
-    double p1h = p1 * x;
-    double p1l = BUILTIN_FMA_F64(p1, x, -p1h);
+    struct f64x2 v2 = sum2(rp2.lo, rp1.hi);
+    struct f64x2 v1 = sum2(rp1.lo, rp0.hi);
+    struct f64x2 w2 = sum2(v2.lo, v1.hi);
 
-    // PROD2(p2, x, p2h, p2l)
-    double p2h = p2 * x;
-    double p2l = BUILTIN_FMA_F64(p2, x, -p2h);
+    double e3 = rp2.hi;
+    double e2 = v2.hi;
+    double e1 = w2.hi;
+    double e0 = w2.lo + v1.lo + rp0.lo;
 
-    // SUM2(p2l, p1h, v2h, v2l)
-    double v2h = p2l + p1h;
-    double v2h_aa = v2h - p1h;
-    double v2h_bb = v2h - v2h_aa;
-    double v2l = (p2l - v2h_aa) + (p1h - v2h_bb);
+    struct f64x2 e32 = fsum2(e3, e2);
+    struct f64x2 e21 = fsum2(e32.lo, e1);
+    struct f64x2 e10 = fsum2(e21.lo, e0);
 
-    // SUM2(p1l, p0h, v1h, v1l)
-    double v1h = p1l + p0h;
-    double v1h_aa = v1h - p0h;
-    double v1h_bb = v1h - v1h_aa;
-    double v1l = (p1l - v1h_aa) + (p0h - v1h_bb);
-
-    // SUM2(v2l, v1h, w2h, w2l)
-    double w2h = v2l + v1h;
-    double w2h_aa = w2h - v1h;
-    double w2h_bb = w2h - w2h_aa;
-    double w2l = (v2l - w2h_aa) + (v1h - w2h_bb);
-
-    double e3 = p2h;
-    double e2 = v2h;
-    double e1 = w2h;
-    double e0 = w2l + v1l + p0l;
-
-    // FSUM2(e3, e2, e3, e2)
-    double e3_e2_sum = e3 + e2;
-    e2 = e2 - (e3_e2_sum - e3);
-    e3 = e3_e2_sum;
-
-    // FSUM2(e2, e1, e2, e1)
-    double e2_e1_sum = e2 + e1;
-    e1 = e1 - (e2_e1_sum - e2);
-    e2 = e2_e1_sum;
-
-    // FSUM2(e1, e0, e1, e0)
-    double e1_e0_sum = e1 + e0;
-    e0 = e0 - (e1_e0_sum - e1);
-    e1 = e1_e0_sum;
-
-    double f2 = e3;
-    double f1 = e2;
-    double f0 = e1;
+    double f2 = e32.hi;
+    double f1 = e21.hi;
+    double f0 = e10.hi;
 
     f2 = BUILTIN_FLDEXP_F64(BUILTIN_FRACTION_F64(BUILTIN_FLDEXP_F64(f2, -2)), 2);
     f2 += f2+f1 < 0.0 ? 4.0 : 0.0;
@@ -78,24 +75,19 @@ MATH_PRIVATE(trigredlarge)(double x)
     int i = (int)(f2 + f1);
     f2 -= (double)i;
 
-    // FSUM2(f2, f1, f2, f1)
-    double f2_f1_sum = f2 + f1;
-    f1 = f1 - (f2_f1_sum - f2);
-    f2 = f2_f1_sum;
-
-    // FSUM2(f1, f0, f1, f0)
-    double f1_f0_sum = f1 + f0;
-    f0 = f0 - (f1_f0_sum - f1);
-    f1 = f1_f0_sum;
+    struct f64x2 f21 = fsum2(f2, f1);
+    struct f64x2 f10 = fsum2(f21.lo, f0);
+    f2 = f21.hi;
+    f1 = f10.hi;
+    f0 = f10.lo;
 
     int g = f2 >= 0.5;
     i += g;
     f2 -= g ? 1.0 : 0.0;
 
-    // FSUM2(f2, f1, f2, f1)
-    double f2_f1_sum2 = f2 + f1;
-    f1 = f1 - (f2_f1_sum2 - f2);
-    f2 = f2_f1_sum2;
+    struct f64x2 rf = fsum2(f2, f1);
+    f2 = rf.hi;
+    f1 = rf.lo;
 
     const double pio2h  = 0x1.921fb54442d18p+0;
     const double pio2t  = 0x1.1a62633145c07p-54;
@@ -103,14 +95,11 @@ MATH_PRIVATE(trigredlarge)(double x)
     double rh = f2 * pio2h;
     double rt = BUILTIN_FMA_F64(f1, pio2h, BUILTIN_FMA_F64(f2, pio2t, BUILTIN_FMA_F64(f2, pio2h, -rh)));
 
-    // FSUM2(rh, rt, rh, rt)
-    double rh_rt_sum = rh + rt;
-    rt = rt - (rh_rt_sum - rh);
-    rh = rh_rt_sum;
+    struct f64x2 r = fsum2(rh, rt);
 
     struct redret ret;
-    ret.hi = rh;
-    ret.lo = rt;
+    ret.hi = r.hi;
+    ret.lo = r.lo;
     ret.i = i & 0x3;
     return ret;
 }
